@@ -216,6 +216,17 @@ function renderLocalAudio(tracks) {
   }
   showCard('l-audio-card');
 
+  const checkAll = document.getElementById('l-audio-check-all');
+  checkAll.checked = true;
+
+  const syncCheckAll = () => {
+    const cbs = tbody.querySelectorAll('input[type="checkbox"]');
+    const allChecked = Array.from(cbs).every(cb => cb.checked);
+    const noneChecked = Array.from(cbs).every(cb => !cb.checked);
+    checkAll.checked = allChecked;
+    checkAll.indeterminate = !allChecked && !noneChecked;
+  };
+
   tracks.forEach(t => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -226,7 +237,7 @@ function renderLocalAudio(tracks) {
       <td>${t.note || ''}</td>
     `;
     const cb = tr.querySelector('input[type="checkbox"]');
-    cb.checked = true; // 默认全选
+    cb.checked = true;
     state.local.selectedAudioIds.push(t.format_id);
 
     cb.addEventListener('change', () => {
@@ -235,6 +246,7 @@ function renderLocalAudio(tracks) {
       } else {
         state.local.selectedAudioIds = state.local.selectedAudioIds.filter(id => id !== t.format_id);
       }
+      syncCheckAll();
     });
 
     tr.addEventListener('click', (e) => {
@@ -245,6 +257,18 @@ function renderLocalAudio(tracks) {
     });
 
     tbody.appendChild(tr);
+  });
+}
+
+function toggleAllAudio(checked) {
+  const tbody = document.getElementById('l-audio-body');
+  const cbs = tbody.querySelectorAll('input[type="checkbox"]');
+  state.local.selectedAudioIds = [];
+  cbs.forEach(cb => {
+    cb.checked = checked;
+    if (checked) {
+      state.local.selectedAudioIds.push(cb.dataset.formatId);
+    }
   });
 }
 

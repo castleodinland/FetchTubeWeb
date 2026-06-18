@@ -27,13 +27,16 @@ var codecRank = map[string]int{
 func ParseVideoInfo(raw *RawInfo) *models.VideoInfo {
 	allFormats := raw.Formats
 
-	// 查找最佳音频流
+	// 查找最佳音频流（跳过 DRC 变体）
 	var bestAudio *RawFormat
 	for i := range allFormats {
 		f := &allFormats[i]
 		vcodec := strings.ToLower(f.Vcodec)
 		acodec := strings.ToLower(f.Acodec)
 		if vcodec == "none" && acodec != "none" {
+			if strings.Contains(f.FormatID, "-drc") {
+				continue
+			}
 			abr := toInt(f.ABR)
 			if bestAudio == nil || abr > toInt(bestAudio.ABR) {
 				bestAudio = f
@@ -61,7 +64,7 @@ func ParseVideoInfo(raw *RawInfo) *models.VideoInfo {
 
 		if existing, ok := videoByHeight[f.Height]; ok {
 			existingScore := toInt(existing.TBR) + getCodecScore(existing.Vcodec)
-			if currentScore > existingScore {
+			if betterFormat(f, existing, currentScore, existingScore) {
 				videoByHeight[f.Height] = f
 			}
 		} else {
@@ -73,7 +76,7 @@ func ParseVideoInfo(raw *RawInfo) *models.VideoInfo {
 		if acodec == "none" {
 			if existing, ok := dashVideo[f.Height]; ok {
 				existingScore := toInt(existing.TBR) + getCodecScore(existing.Vcodec)
-				if currentScore > existingScore {
+				if betterFormat(f, existing, currentScore, existingScore) {
 					dashVideo[f.Height] = f
 				}
 			} else {
@@ -83,6 +86,8 @@ func ParseVideoInfo(raw *RawInfo) *models.VideoInfo {
 	}
 
 	// 构建格式列表
+	durationSeconds := toInt(raw.Duration)
+
 	formats := make([]models.FormatOption, 0)
 	seenHeights := make(map[int]bool)
 
@@ -104,24 +109,18 @@ func ParseVideoInfo(raw *RawInfo) *models.VideoInfo {
 
 		formatID := f.FormatID
 		audioCodec := "none"
-		totalSize := float64(toInt(f.Filesize) + toInt(f.FilesizeApprox))
+		fileSizeMB := calcFileSizeMB(f.Filesize, f.FilesizeApprox, f.TBR, durationSeconds)
 
-		if bestAudio != nil {
+		if bestAudio != nil && strings.ToLower(f.Acodec) == "none" {
 			formatID = f.FormatID + "+" + bestAudio.FormatID
 			audioCodec = bestAudio.Acodec
-			audioSize := float64(toInt(bestAudio.Filesize) + toInt(bestAudio.FilesizeApprox))
-			if totalSize > 0 && audioSize > 0 {
-				totalSize = totalSize + audioSize
+			audioMB := calcFileSizeMB(bestAudio.Filesize, bestAudio.FilesizeApprox, bestAudio.TBR, durationSeconds)
+			if fileSizeMB > 0 && audioMB > 0 {
+				fileSizeMB = fileSizeMB + audioMB
 			}
 		} else {
 			audioCodec = f.Acodec
 		}
-
-		fileSizeMB := totalSize / (1024 * 1024)
-		if fileSizeMB < 0.01 {
-			fileSizeMB = 0
-		}
-		fileSizeMB = float64(int(fileSizeMB*10)) / 10 // 保留1位小数
 
 		note := f.FormatNote
 		if note == "" || note == "(default)" || note == "unknown" {
@@ -164,12 +163,7 @@ func ParseVideoInfo(raw *RawInfo) *models.VideoInfo {
 		}
 		seenHeights[f.Height] = true
 
-		totalSize := float64(toInt(f.Filesize) + toInt(f.FilesizeApprox))
-		fileSizeMB := totalSize / (1024 * 1024)
-		if fileSizeMB < 0.01 {
-			fileSizeMB = 0
-		}
-		fileSizeMB = float64(int(fileSizeMB*10)) / 10
+		fileSizeMB := calcFileSizeMB(f.Filesize, f.FilesizeApprox, f.TBR, durationSeconds)
 
 		note := f.FormatNote
 		if note == "" || note == "(default)" || note == "unknown" {
@@ -216,14 +210,12 @@ func ParseVideoInfo(raw *RawInfo) *models.VideoInfo {
 		thumbnail = buildThumbnailURL(raw.URL)
 	}
 
-	duration := toInt(raw.Duration)
-
 	return &models.VideoInfo{
 		Title:           raw.Title,
 		URL:             raw.URL,
 		ThumbnailURL:    thumbnail,
-		DurationSeconds: duration,
-		DurationStr:     FormatDuration(duration),
+		DurationSeconds: durationSeconds,
+		DurationStr:     FormatDuration(durationSeconds),
 		Uploader:        raw.Uploader,
 		ViewCount:       toInt(raw.ViewCount),
 		LikeCount:       toInt(raw.LikeCount),
@@ -304,6 +296,21 @@ func extractAudioTracks(formats []RawFormat) []models.AudioTrack {
 
 // ---- 辅助函数 ----
 
+// hasSize 检查格式是否有实际的文件大小数据
+func hasSize(f *RawFormat) bool {
+	return toFloat(f.Filesize) > 0 || toFloat(f.FilesizeApprox) > 0
+}
+
+// betterFormat 比较两个格式，优先选择有 filesize 数据的格式（避免 TBR 估算偏差）
+func betterFormat(newF, existing *RawFormat, newScore, existingScore int) bool {
+	newHas := hasSize(newF)
+	existingHas := hasSize(existing)
+	if newHas != existingHas {
+		return newHas
+	}
+	return newScore > existingScore
+}
+
 func getCodecScore(vcodec string) int {
 	vc := strings.ToLower(vcodec)
 	for prefix, score := range codecRank {
@@ -312,6 +319,24 @@ func getCodecScore(vcodec string) int {
 		}
 	}
 	return 0
+}
+
+func calcFileSizeMB(fs, fsApprox, tbr interface{}, durationSeconds int) float64 {
+	sz := toFloat(fs)
+	if sz == 0 {
+		sz = toFloat(fsApprox)
+	}
+	if sz == 0 {
+		br := toFloat(tbr)
+		if br > 0 && durationSeconds > 0 {
+			sz = br * 1000 / 8 * float64(durationSeconds)
+		}
+	}
+	mb := sz / (1024 * 1024)
+	if mb < 0.01 {
+		return 0
+	}
+	return float64(int(mb*10)) / 10
 }
 
 func formatNote(height, fps int) string {
