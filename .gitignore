@@ -3,6 +3,7 @@ FetchTubeWeb.exe
 *.exe
 *.test
 *.out
+*.syso
 dist/
 
 # Go temporary / logs
@@ -21,3 +22,9 @@ Thumbs.db
 # ── Project ──
 downloads/
 *cookies*.txt
+
+# Icon source and generator
+gen_icon/app_icon.ico
+
+# Allow build tool binaries in gen_icon/tools/
+!gen_icon/tools/rsrc.exe

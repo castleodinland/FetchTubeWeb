@@ -103,6 +103,19 @@ jobs:
       # Build Go (static link, no runtime deps)
       # ============================================================
 
+      - name: Generate icon resource (if .syso missing)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path rsrc_windows_amd64.syso)) {
+            Write-Host "Generating icon resource..."
+            go run ./gen_icon/
+            go install github.com/akavel/rsrc@latest
+            rsrc -ico app_icon.ico -o rsrc_windows_amd64.syso
+            Write-Host "Icon resource generated."
+          } else {
+            Write-Host "Icon resource (.syso) already present, skipping generation."
+          }
+
       - name: Build FetchTubeWeb.exe
         shell: pwsh
         run: |

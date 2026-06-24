@@ -12,6 +12,20 @@ Write-Host "  FetchTubeWeb Release Build" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
+# 0. Ensure icon resource is embedded (generate if .syso missing)
+if (-not (Test-Path rsrc_windows_amd64.syso)) {
+    Write-Host "[pre] Generating icon resource..." -ForegroundColor Yellow
+    go run ./gen_icon/
+    $rsrcExe = Join-Path $goDir "gen_icon\tools\rsrc.exe"
+    if (Test-Path $rsrcExe) {
+        & $rsrcExe -ico "$goDir\app_icon.ico" -o "$goDir\rsrc_windows_amd64.syso"
+        Write-Host "  [OK] rsrc_windows_amd64.syso generated" -ForegroundColor Green
+    } else {
+        Write-Host "  [WARN] rsrc.exe not found at gen_icon\tools\rsrc.exe" -ForegroundColor Yellow
+        Write-Host "  [WARN] Icon will not be embedded. To fix, run: go install github.com/akavel/rsrc@latest" -ForegroundColor Yellow
+    }
+}
+
 # 1. Build Go binary
 Write-Host "[1/4] Building Go binary..." -ForegroundColor Yellow
 go build -ldflags="-s -w" -o FetchTubeWeb.exe .
